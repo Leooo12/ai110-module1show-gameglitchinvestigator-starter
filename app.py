@@ -5,9 +5,9 @@ def get_range_for_difficulty(difficulty: str):
     if difficulty == "Easy":
         return 1, 20
     if difficulty == "Normal":
-        return 1, 100
-    if difficulty == "Hard":
         return 1, 50
+    if difficulty == "Hard":
+        return 1, 100
     return 1, 100
 
 
@@ -19,12 +19,9 @@ def parse_guess(raw: str):
         return False, None, "Enter a guess."
 
     try:
-        if "." in raw:
-            value = int(float(raw))
-        else:
-            value = int(raw)
+        value = int(raw)
     except Exception:
-        return False, None, "That is not a number."
+        return False, None, "Enter a whole number."
 
     return True, value, None
 
@@ -35,34 +32,29 @@ def check_guess(guess, secret):
 
     try:
         if guess > secret:
-            return "Too High", "📈 Go HIGHER!"
+            return "Too High", "📉 Go LOWER!"
         else:
-            return "Too Low", "📉 Go LOWER!"
+            return "Too Low", "📈 Go HIGHER!"
     except TypeError:
         g = str(guess)
         if g == secret:
             return "Win", "🎉 Correct!"
         if g > secret:
-            return "Too High", "📈 Go HIGHER!"
-        return "Too Low", "📉 Go LOWER!"
+            return "Too High", "📉 Go LOWER!"
+        return "Too Low", "📈 Go HIGHER!"
 
 
 def update_score(current_score: int, outcome: str, attempt_number: int):
     if outcome == "Win":
-        points = 100 - 10 * (attempt_number + 1)
-        if points < 10:
-            points = 10
-        return current_score + points
+        bonus = 100 - 10 * attempt_number
+        if bonus < 10:
+            bonus = 10
+        # The win score is the bonus itself (100 minus 10 per attempt, floored
+        # at 10) — not added to the running total, which would blow past 100.
+        return bonus
 
-    if outcome == "Too High":
-        if attempt_number % 2 == 0:
-            return current_score + 5
-        return current_score - 5
-
-    if outcome == "Too Low":
-        return current_score - 5
-
-    return current_score
+    # Wrong guess: lose 5 points, but never drop below 0.
+    return max(0, current_score - 5)
 
 st.set_page_config(page_title="Glitchy Guesser", page_icon="🎮")
 
@@ -78,9 +70,9 @@ difficulty = st.sidebar.selectbox(
 )
 
 attempt_limit_map = {
-    "Easy": 6,
-    "Normal": 8,
-    "Hard": 5,
+    "Easy": 8,
+    "Normal": 7,
+    "Hard": 6,
 }
 attempt_limit = attempt_limit_map[difficulty]
 
@@ -89,14 +81,11 @@ low, high = get_range_for_difficulty(difficulty)
 st.sidebar.caption(f"Range: {low} to {high}")
 st.sidebar.caption(f"Attempts allowed: {attempt_limit}")
 
-if "secret" not in st.session_state:
-    st.session_state.secret = random.randint(low, high)
-
 if "attempts" not in st.session_state:
-    st.session_state.attempts = 1
+    st.session_state.attempts = 0
 
 if "score" not in st.session_state:
-    st.session_state.score = 0
+    st.session_state.score = 100
 
 if "status" not in st.session_state:
     st.session_state.status = "playing"
@@ -104,12 +93,42 @@ if "status" not in st.session_state:
 if "history" not in st.session_state:
     st.session_state.history = []
 
+# Result message to show after a rerun (so the input can be cleared without
+# losing the hint/error/win message).
+if "feedback" not in st.session_state:
+    st.session_state.feedback = None
+
+# Rotating key for the guess input — bumping it gives a fresh, empty text box.
+if "input_nonce" not in st.session_state:
+    st.session_state.input_nonce = 0
+
+# Regenerate the secret whenever the difficulty changes (or on first load),
+# so the secret always falls inside the current range.
+if st.session_state.get("difficulty") != difficulty:
+    st.session_state.difficulty = difficulty
+    st.session_state.secret = random.randint(low, high)
+    st.session_state.attempts = 0
+    st.session_state.score = 100
+    st.session_state.status = "playing"
+    st.session_state.history = []
+    st.session_state.feedback = None
+    st.session_state.input_nonce += 1
+
 st.subheader("Make a guess")
 
+attempts_left = max(0, attempt_limit - st.session_state.attempts)
 st.info(
-    f"Guess a number between 1 and 100. "
-    f"Attempts left: {attempt_limit - st.session_state.attempts}"
+    f"Guess a number between {low} and {high}. "
+    f"Attempts left: {attempts_left}"
 )
+
+# Show the result of the previous guess (set before the rerun).
+if st.session_state.feedback:
+    kind, text = st.session_state.feedback
+    getattr(st, kind)(text)
+    if st.session_state.pop("celebrate", False):
+        st.balloons()
+    st.session_state.feedback = None
 
 with st.expander("Developer Debug Info"):
     st.write("Secret:", st.session_state.secret)
@@ -120,7 +139,7 @@ with st.expander("Developer Debug Info"):
 
 raw_guess = st.text_input(
     "Enter your guess:",
-    key=f"guess_input_{difficulty}"
+    key=f"guess_input_{st.session_state.input_nonce}"
 )
 
 col1, col2, col3 = st.columns(3)
@@ -133,8 +152,12 @@ with col3:
 
 if new_game:
     st.session_state.attempts = 0
-    st.session_state.secret = random.randint(1, 100)
-    st.success("New game started.")
+    st.session_state.secret = random.randint(low, high)
+    st.session_state.score = 100
+    st.session_state.status = "playing"
+    st.session_state.history = []
+    st.session_state.feedback = ("success", "New game started.")
+    st.session_state.input_nonce += 1
     st.rerun()
 
 if st.session_state.status != "playing":
@@ -145,25 +168,23 @@ if st.session_state.status != "playing":
     st.stop()
 
 if submit:
-    st.session_state.attempts += 1
-
     ok, guess_int, err = parse_guess(raw_guess)
 
     if not ok:
-        st.session_state.history.append(raw_guess)
-        st.error(err)
+        st.session_state.history.append(f"{raw_guess} (invalid — not counted)")
+        st.session_state.feedback = ("error", err)
+    elif guess_int < low or guess_int > high:
+        st.session_state.history.append(f"{guess_int} (out of range — not counted)")
+        st.session_state.feedback = (
+            "error", f"Out of range! Pick a number between {low} and {high}."
+        )
     else:
+        st.session_state.attempts += 1
         st.session_state.history.append(guess_int)
 
-        if st.session_state.attempts % 2 == 0:
-            secret = str(st.session_state.secret)
-        else:
-            secret = st.session_state.secret
+        secret = st.session_state.secret
 
         outcome, message = check_guess(guess_int, secret)
-
-        if show_hint:
-            st.warning(message)
 
         st.session_state.score = update_score(
             current_score=st.session_state.score,
@@ -172,20 +193,25 @@ if submit:
         )
 
         if outcome == "Win":
-            st.balloons()
             st.session_state.status = "won"
-            st.success(
+            st.session_state.celebrate = True
+            st.session_state.feedback = (
+                "success",
                 f"You won! The secret was {st.session_state.secret}. "
-                f"Final score: {st.session_state.score}"
+                f"Final score: {st.session_state.score}",
             )
-        else:
-            if st.session_state.attempts >= attempt_limit:
-                st.session_state.status = "lost"
-                st.error(
-                    f"Out of attempts! "
-                    f"The secret was {st.session_state.secret}. "
-                    f"Score: {st.session_state.score}"
-                )
+        elif st.session_state.attempts >= attempt_limit:
+            st.session_state.status = "lost"
+            st.session_state.feedback = (
+                "error",
+                f"Out of attempts! The secret was {st.session_state.secret}. "
+                f"Score: {st.session_state.score}",
+            )
+        elif show_hint:
+            st.session_state.feedback = ("warning", message)
+
+    st.session_state.input_nonce += 1
+    st.rerun()
 
 st.divider()
 st.caption("Built by an AI that claims this code is production-ready.")
