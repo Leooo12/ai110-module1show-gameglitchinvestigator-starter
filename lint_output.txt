@@ -1,0 +1,19 @@
+Linting tool: flake8 6.0.0 (pycodestyle 2.10.0, pyflakes 3.0.1), CPython 3.10.15
+
+===== BEFORE =====
+$ flake8 logic_utils.py
+logic_utils.py:62:1: E402 module level import not at top of file
+logic_utils.py:63:1: E402 module level import not at top of file
+logic_utils.py:98:80: E501 line too long (88 > 79 characters)
+logic_utils.py:152:80: E501 line too long (97 > 79 characters)
+
+$ flake8 app.py
+app.py:11:1: E302 expected 2 blank lines, found 1
+app.py:66:1: E305 expected 2 blank lines after class or function definition, found 1
+app.py:198:80: E501 line too long (84 > 79 characters)
+app.py:220:80: E501 line too long (83 > 79 characters)
+app.py:240:80: E501 line too long (85 > 79 characters)
+
+===== AFTER =====
+$ flake8 logic_utils.py app.py
+(no output — 0 issues)

@@ -1,6 +1,15 @@
 import random
 import streamlit as st
 
+from logic_utils import (
+    load_high_scores,
+    update_high_score,
+    load_best_attempts,
+    update_best_attempts,
+    proximity_hint,
+)
+
+
 def get_range_for_difficulty(difficulty: str):
     if difficulty == "Easy":
         return 1, 20
@@ -56,6 +65,7 @@ def update_score(current_score: int, outcome: str, attempt_number: int):
     # Wrong guess: lose 5 points, but never drop below 0.
     return max(0, current_score - 5)
 
+
 st.set_page_config(page_title="Glitchy Guesser", page_icon="🎮")
 
 st.title("🎮 Game Glitch Investigator")
@@ -81,6 +91,20 @@ low, high = get_range_for_difficulty(difficulty)
 st.sidebar.caption(f"Range: {low} to {high}")
 st.sidebar.caption(f"Attempts allowed: {attempt_limit}")
 
+st.sidebar.divider()
+st.sidebar.subheader("🏆 High Scores")
+high_scores = load_high_scores()
+for level in ["Easy", "Normal", "Hard"]:
+    best = high_scores.get(level)
+    st.sidebar.caption(f"{level}: {best if best is not None else '—'}")
+
+st.sidebar.subheader("🎯 Best Attempts")
+best_attempts = load_best_attempts()
+for level in ["Easy", "Normal", "Hard"]:
+    fewest = best_attempts.get(level)
+    label = f"{fewest} guesses" if fewest is not None else "—"
+    st.sidebar.caption(f"{level}: {label}")
+
 if "attempts" not in st.session_state:
     st.session_state.attempts = 0
 
@@ -92,6 +116,11 @@ if "status" not in st.session_state:
 
 if "history" not in st.session_state:
     st.session_state.history = []
+
+# Structured record of each counted guess, used to render the session
+# summary table. Each entry: {"#", "Guess", "Result", "Distance", "Proximity"}.
+if "guess_log" not in st.session_state:
+    st.session_state.guess_log = []
 
 # Result message to show after a rerun (so the input can be cleared without
 # losing the hint/error/win message).
@@ -111,6 +140,7 @@ if st.session_state.get("difficulty") != difficulty:
     st.session_state.score = 100
     st.session_state.status = "playing"
     st.session_state.history = []
+    st.session_state.guess_log = []
     st.session_state.feedback = None
     st.session_state.input_nonce += 1
 
@@ -121,6 +151,13 @@ st.info(
     f"Guess a number between {low} and {high}. "
     f"Attempts left: {attempts_left}"
 )
+
+# At-a-glance scoreboard so the player can track score and attempts without
+# digging through the debug panel.
+m1, m2, m3 = st.columns(3)
+m1.metric("Score", st.session_state.score)
+m2.metric("Attempts left", attempts_left)
+m3.metric("Guesses made", st.session_state.attempts)
 
 # Show the result of the previous guess (set before the rerun).
 if st.session_state.feedback:
@@ -156,6 +193,7 @@ if new_game:
     st.session_state.score = 100
     st.session_state.status = "playing"
     st.session_state.history = []
+    st.session_state.guess_log = []
     st.session_state.feedback = ("success", "New game started.")
     st.session_state.input_nonce += 1
     st.rerun()
@@ -174,7 +212,9 @@ if submit:
         st.session_state.history.append(f"{raw_guess} (invalid — not counted)")
         st.session_state.feedback = ("error", err)
     elif guess_int < low or guess_int > high:
-        st.session_state.history.append(f"{guess_int} (out of range — not counted)")
+        st.session_state.history.append(
+            f"{guess_int} (out of range — not counted)"
+        )
         st.session_state.feedback = (
             "error", f"Out of range! Pick a number between {low} and {high}."
         )
@@ -186,6 +226,19 @@ if submit:
 
         outcome, message = check_guess(guess_int, secret)
 
+        emoji, prox_label, prox_color = proximity_hint(
+            guess_int, secret, low, high
+        )
+        st.session_state.guess_log.append(
+            {
+                "#": st.session_state.attempts,
+                "Guess": guess_int,
+                "Result": outcome,
+                "Distance": abs(guess_int - secret),
+                "Proximity": f"{emoji} {prox_label}",
+            }
+        )
+
         st.session_state.score = update_score(
             current_score=st.session_state.score,
             outcome=outcome,
@@ -195,10 +248,31 @@ if submit:
         if outcome == "Win":
             st.session_state.status = "won"
             st.session_state.celebrate = True
+
+            is_record, best = update_high_score(
+                difficulty, st.session_state.score
+            )
+            record_note = (
+                f" 🏆 New {difficulty} high score!"
+                if is_record
+                else f" (Best {difficulty}: {best})"
+            )
+
+            attempts_used = st.session_state.attempts
+            is_fewest, best_attempts_count = update_best_attempts(
+                difficulty, attempts_used
+            )
+            attempt_note = (
+                f" 🎯 Fewest guesses yet ({attempts_used})!"
+                if is_fewest
+                else f" (Best: {best_attempts_count} guesses)"
+            )
+
             st.session_state.feedback = (
                 "success",
                 f"You won! The secret was {st.session_state.secret}. "
-                f"Final score: {st.session_state.score}",
+                f"Final score: {st.session_state.score}."
+                f"{record_note}{attempt_note}",
             )
         elif st.session_state.attempts >= attempt_limit:
             st.session_state.status = "lost"
@@ -208,10 +282,20 @@ if submit:
                 f"Score: {st.session_state.score}",
             )
         elif show_hint:
-            st.session_state.feedback = ("warning", message)
+            # Color-coded hint: the directional message plus a Hot/Cold
+            # badge whose color reflects how close the guess is.
+            st.session_state.feedback = (
+                "markdown",
+                f"### {message}\n\n"
+                f":{prox_color}-badge[{emoji} {prox_label}]",
+            )
 
     st.session_state.input_nonce += 1
     st.rerun()
+
+if st.session_state.guess_log:
+    st.subheader("📋 Session Summary")
+    st.table(st.session_state.guess_log)
 
 st.divider()
 st.caption("Built by an AI that claims this code is production-ready.")

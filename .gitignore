@@ -32,6 +32,12 @@ coverage.xml
 # Logs
 *.log
 
+# High score tracker (per-machine save file)
+high_scores.json
+
+# Best attempt tracker (per-machine save file)
+best_attempts.json
+
 # OS generated files
 .DS_Store
 Thumbs.db
